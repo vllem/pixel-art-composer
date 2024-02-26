@@ -1,3 +1,3 @@
-python -m venv pixel-art-composer <break>
-pip install -r requirements.txt <break>
-pyinstaller --onefile pixel_art_composer.py <break>
+python -m venv pixel-art-composer <br>
+pip install -r requirements.txt <br>
+pyinstaller --onefile pixel_art_composer.py <br>
