@@ -1,0 +1,8 @@
+altgraph==0.17.4
+llvmlite==0.42.0
+numba==0.59.0
+numpy==1.26.4
+opencv-python==4.9.0.80
+packaging==23.2
+pyinstaller==6.4.0
+pyinstaller-hooks-contrib==2024.1
