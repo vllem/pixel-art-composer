@@ -1,3 +1,7 @@
+name: Build Windows Executable
+
+on: [push]
+
 jobs:
   build:
     name: Build exe with PyInstaller
@@ -21,11 +25,11 @@ jobs:
       run: pip install pyinstaller
       
     - name: Build executable
-      run: |
-        pyinstaller --onefile --add-data "hex;hex" pixel-art-composer-gui-windows.py
+      run: pyinstaller --onefile --add-data "hex;hex" pixel-art-composer-gui-windows.py
       
     - name: Upload artifact
       uses: actions/upload-artifact@v2
       with:
         name: pixel-art-composer-windows-gui-executable
         path: dist/*.exe
+
