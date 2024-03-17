@@ -10,8 +10,8 @@ from PyQt5.QtWidgets import (QApplication, QWidget, QLabel, QVBoxLayout,
 from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QPixmap, QDoubleValidator
 
-# Adjust the environment variable for the QT platform plugin path if necessary
-# os.environ['QT_QPA_PLATFORM_PLUGIN_PATH'] = 'path/to/your/qt/plugins'
+
+#os.environ['QT_QPA_PLATFORM_PLUGIN_PATH'] = 'pixel-art-composer/lib/python3.10/site-packages/cv2/qt/plugins/platforms'
 
 def get_application_path():
     if getattr(sys, 'frozen', False):
@@ -113,8 +113,8 @@ class PixelArtComposer(QWidget):
     def setupHexDropdown(self):
         self.hexLayout = QHBoxLayout()
 
-        self.btnLoadHexFiles = QPushButton('Load Hex Files', self)
-        self.btnLoadHexFiles.clicked.connect(self.populateHexDropdown)
+        self.btnLoadHexFiles = QPushButton('Load Hex Folder', self)
+        self.btnLoadHexFiles.clicked.connect(self.openHexFolderDialog)
         self.hexLayout.addWidget(self.btnLoadHexFiles)
 
         self.hexDropdown = QComboBox(self)
@@ -123,14 +123,14 @@ class PixelArtComposer(QWidget):
 
         self.layout.addLayout(self.hexLayout)
 
-    def populateHexDropdown(self):
-        application_path = get_application_path()
-        hex_folder = os.path.join(application_path, 'hex')
-        if not os.path.exists(hex_folder):
-            print("Hex folder not found!")
-            return
+    def openHexFolderDialog(self):
+        options = QFileDialog.Options()
+        folderPath = QFileDialog.getExistingDirectory(self, "Select Hex Folder", options=options)
+        if folderPath:
+            self.loadHexFiles(folderPath)
 
-        hex_files = [f for f in os.listdir(hex_folder) if f.endswith('.hex')]
+    def loadHexFiles(self, folderPath):
+        hex_files = [f for f in os.listdir(folderPath) if f.endswith('.hex') or f.endswith('.txt')]
         if hex_files:
             self.hexDropdown.clear()  # Clear existing items before adding new ones
             self.hexDropdown.addItems(hex_files)
@@ -138,7 +138,8 @@ class PixelArtComposer(QWidget):
             self.btnLoadHexFiles.hide()
             self.hexDropdown.show()
         else:
-            print("No .hex files found in the hex folder.")
+            print("No .hex or .txt files found in the selected folder.")
+
 
     def createParameterControl(self, label_text):
         mainWidget = QWidget()
