@@ -11,7 +11,7 @@ from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QPixmap, QDoubleValidator
 
 
-#os.environ['QT_QPA_PLATFORM_PLUGIN_PATH'] = 'pixel-art-composer/lib/python3.10/site-packages/cv2/qt/plugins/platforms'
+os.environ['QT_QPA_PLATFORM_PLUGIN_PATH'] = 'pixel-art-composer/lib/python3.10/site-packages/cv2/qt/plugins/platforms'
 
 def get_application_path():
     if getattr(sys, 'frozen', False):
@@ -64,6 +64,11 @@ def all_procss(image_path, hex_color_file_path, pixelation_scale, output_file_pa
     with open(hex_color_file_path, 'r') as file:
         for line in file:
             palette.append(hex_to_BGR(line.strip()))
+
+    print("Opening hex color file path:", hex_color_file_path)
+    if os.path.isdir(hex_color_file_path):
+        print(f"Expected a file but got a directory: {hex_color_file_path}")
+        return 1
 
     palette = np.array(palette, dtype=np.uint8)
 
@@ -198,7 +203,10 @@ class PixelArtComposer(QWidget):
         _, input_image_extension = os.path.splitext(self.loaded_image_path)
 
         output_image = os.path.join(tempfile.gettempdir(), f'output_pixel_art{input_image_extension}')
+        print("Selected hex file from dropdown:", self.hexDropdown.currentText())
         palette_file = os.path.join(get_application_path(), 'hex', self.hexDropdown.currentText())
+        print("Constructed palette_file path:", palette_file)
+
         if self.pixelation_scale_input is None:
             print("Pixelation scale input is not initialized.")
             return
