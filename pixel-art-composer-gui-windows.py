@@ -13,14 +13,10 @@ from PyQt5.QtGui import QPixmap, QDoubleValidator
 
 os.environ['QT_QPA_PLATFORM_PLUGIN_PATH'] = 'pixel-art-composer/lib/python3.10/site-packages/cv2/qt/plugins/platforms'
 
-def get_application_path():
-    if getattr(sys, 'frozen', False):
-        # The application is running as a bundled executable
-        application_path = getattr(sys, '_MEIPASS', os.path.dirname(os.path.abspath(sys.executable)))
-    else:
-        # The application is running as a script in a development environment
-        application_path = os.path.dirname(os.path.abspath(__file__))
-    return application_path
+def get_resource_path(relative_path):
+    base_path = os.path.abspath(".")
+
+    return os.path.join(base_path, relative_path)
 
 def hex_to_BGR(hex_color):
     hex_color = hex_color.lstrip('#')
@@ -204,7 +200,7 @@ class PixelArtComposer(QWidget):
 
         output_image = os.path.join(tempfile.gettempdir(), f'output_pixel_art{input_image_extension}')
         print("Selected hex file from dropdown:", self.hexDropdown.currentText())
-        palette_file = os.path.join(get_application_path(), 'hex', self.hexDropdown.currentText())
+        palette_file = get_resource_path(os.path.join('hex', self.hexDropdown.currentText()))
         print("Constructed palette_file path:", palette_file)
 
         if self.pixelation_scale_input is None:

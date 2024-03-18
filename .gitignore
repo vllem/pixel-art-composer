@@ -1,1 +1,5 @@
 pixel-art-composer/
+__pycache__/
+dist/
+build/
+hex/
