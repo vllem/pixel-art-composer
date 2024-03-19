@@ -6,37 +6,94 @@ import numpy as np
 from numba import jit
 from PyQt5.QtWidgets import (QApplication, QWidget, QLabel, QVBoxLayout,
                              QHBoxLayout, QPushButton, QSlider, QFileDialog,
-                             QLineEdit, QComboBox, QScrollArea)
+                             QLineEdit, QComboBox, QScrollArea, QCheckBox)
 from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QPixmap, QDoubleValidator
 
+
 os.environ['QT_QPA_PLATFORM_PLUGIN_PATH'] = 'pixel-art-composer/lib/python3.10/site-packages/cv2/qt/plugins/platforms'
 
-
+def get_resource_path(relative_path):
+    base_path = os.path.abspath(".")
+    return os.path.join(base_path, relative_path)
 
 def hex_to_BGR(hex_color):
     hex_color = hex_color.lstrip('#')
     r, g, b = tuple(int(hex_color[i:i+2], 16) for i in (0, 2, 4))
     return np.array([b, g, r], dtype=np.uint8)
 
-@jit(nopython=True)
-def find_closest_palette_color(color, palette):
-    min_distance = np.inf
-    index = -1
-    for i in range(palette.shape[0]):
-        distance = np.sum((color - palette[i]) ** 2)
-        if distance < min_distance:
-            min_distance = distance
-            index = i
-    return index
+def ensure_odd(number):
+    number = abs(int(number)) 
+    return number if number % 2 == 1 else number + 1
+
+def add_black_edges(input_image, low_threshold, high_threshold, blur_kernel_size, edge_color, line_thickness):
+    image = input_image.copy()
+
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+
+
+    blur_kernel_size = ensure_odd(blur_kernel_size)
+    blur = cv2.GaussianBlur(gray, (blur_kernel_size, blur_kernel_size), 0)
+
+    edges = cv2.Canny(blur, low_threshold, high_threshold)
+
+    
+    edge_color = hex_to_BGR(edge_color)
+
+    if line_thickness > 1:
+        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (line_thickness, line_thickness))
+        edges = cv2.dilate(edges, kernel)
+
+    transparent_edges = np.zeros((edges.shape[0], edges.shape[1], 4), dtype=np.uint8)
+
+    for y in range(edges.shape[0]):
+        for x in range(edges.shape[1]):
+            if edges[y, x]:
+                transparent_edges[y, x] = [edge_color[0], edge_color[1], edge_color[2], 255]
+
+    for y in range(image.shape[0]):
+        for x in range(image.shape[1]):
+            if transparent_edges[y, x][3] > 0:
+                image[y, x] = [transparent_edges[y, x][0], transparent_edges[y, x][1], transparent_edges[y, x][2]]
+
+    return image
+
+# @jit(nopython=True)
+# def process_image(image, palette):
+#     for i in range(image.shape[0]):
+#         for j in range(image.shape[1]):
+#             pixel = image[i, j]
+#             closest_color_index = find_closest_palette_color(pixel, palette)
+#             image[i, j] = palette[closest_color_index]
+#     return image
 
 @jit(nopython=True)
-def process_image(image, palette):
-    for i in range(image.shape[0]):
-        for j in range(image.shape[1]):
+def process_image(image, palette, find_closest=True):
+    height, width, _ = image.shape
+    for i in range(height):
+        for j in range(width):
             pixel = image[i, j]
-            closest_color_index = find_closest_palette_color(pixel, palette)
-            image[i, j] = palette[closest_color_index]
+            best_color_index = -1  # Initialized to an invalid index
+            if find_closest:
+                best_distance = np.inf
+            else:
+                best_distance = -np.inf
+
+            for k in range(palette.shape[0]):
+                distance = np.sum((pixel - palette[k]) ** 2)
+                
+                if find_closest and distance < best_distance:
+                    best_distance = distance
+                    best_color_index = k
+                elif not find_closest and distance > best_distance:
+                    best_distance = distance
+                    best_color_index = k
+
+            if best_color_index == -1:
+                raise ValueError("No best color index found.")  # Using an exception for error handling
+
+            image[i, j] = palette[best_color_index]
+
     return image
 
 def resize_image(image, scale):
@@ -46,10 +103,9 @@ def resize_image(image, scale):
     resized = cv2.resize(resized, (image.shape[1], image.shape[0]), interpolation=cv2.INTER_NEAREST)
     return resized
 
-def all_procss(image_path, hex_color_file_path, pixelation_scale, output_file_path):
-    image = cv2.imread(image_path)
-    if image is None:
-        print(f"Could not read the image: {image_path}")
+def all_process(image, hex_color_file_path, pixelation_scale, output_file_path, find_closest):
+    if image is None or image.size == 0:
+        print("Error: Image is empty or not loaded correctly.")
         return 1
 
     palette = []
@@ -57,11 +113,31 @@ def all_procss(image_path, hex_color_file_path, pixelation_scale, output_file_pa
         for line in file:
             palette.append(hex_to_BGR(line.strip()))
 
+    print("Opening hex color file path:", hex_color_file_path)
+    if os.path.isdir(hex_color_file_path):
+        print(f"Expected a file but got a directory: {hex_color_file_path}")
+        return 1
+
     palette = np.array(palette, dtype=np.uint8)
 
     scale = float(pixelation_scale)
+    if not 0.0 < scale <= 1.0:
+        print("Error: Scale must be between 0.0 and 1.0")
+        return 1
+    
     resized_image = resize_image(image, scale)
-    processed_image = process_image(resized_image, palette)
+    if resized_image is None or resized_image.size == 0:
+        print("Error: Resized image is empty.")
+        return 1
+
+    if find_closest == True:
+        processed_image = process_image(resized_image, palette, True)
+    else:
+        processed_image = process_image(resized_image, palette, False)
+
+    if processed_image is None or processed_image.size == 0:
+        print("Error: Processed image is empty.")
+        return 1
 
     if not cv2.imwrite(output_file_path, processed_image):
         print("Failed to save the modified image.")
@@ -70,13 +146,10 @@ def all_procss(image_path, hex_color_file_path, pixelation_scale, output_file_pa
     print(f"The image has been converted to use the indexed colors from the HEX file. Result saved as {output_file_path}")
     return 0
 
-#    if len(sys.argv) != 5:
-#        print(f"Usage: {sys.argv[0]} <ImagePath> <HexColorFilePath> <PixelationScale> <OutputFilePath>")
-#        sys.exit(1)
-
 class PixelArtComposer(QWidget):
-    def __init__(self):
+    def __init__(self, temp_dir_path):
         super().__init__()
+        self.temp_dir_path = temp_dir_path
         self.image = None
         self.loaded_image_path = ""
         self.pixelation_scale_slider = None
@@ -109,8 +182,8 @@ class PixelArtComposer(QWidget):
     def setupHexDropdown(self):
         self.hexLayout = QHBoxLayout()
 
-        self.btnLoadHexFiles = QPushButton('Load Hex Files', self)
-        self.btnLoadHexFiles.clicked.connect(self.populateHexDropdown)
+        self.btnLoadHexFiles = QPushButton('Load Hex Folder', self)
+        self.btnLoadHexFiles.clicked.connect(self.openHexFolderDialog)
         self.hexLayout.addWidget(self.btnLoadHexFiles)
 
         self.hexDropdown = QComboBox(self)
@@ -119,20 +192,23 @@ class PixelArtComposer(QWidget):
 
         self.layout.addLayout(self.hexLayout)
 
-    def populateHexDropdown(self):
-        hex_folder = os.path.join(os.path.dirname(__file__), 'hex')
-        if not os.path.exists(hex_folder):
-            print("Hex folder not found!")
-            return
+    def openHexFolderDialog(self):
+        options = QFileDialog.Options()
+        folderPath = QFileDialog.getExistingDirectory(self, "Select Hex Folder", options=options)
+        if folderPath:
+            self.loadHexFiles(folderPath)
 
-        hex_files = [f for f in os.listdir(hex_folder) if f.endswith('.hex')]
+    def loadHexFiles(self, folderPath):
+        hex_files = [f for f in os.listdir(folderPath) if f.endswith('.hex') or f.endswith('.txt')]
         if hex_files:
+            self.hexDropdown.clear()
             self.hexDropdown.addItems(hex_files)
 
             self.btnLoadHexFiles.hide()
             self.hexDropdown.show()
         else:
-            print("No .hex files found in the hex folder.")
+            print("No .hex or .txt files found in the selected folder.")
+
 
     def createParameterControl(self, label_text):
         mainWidget = QWidget()
@@ -159,11 +235,46 @@ class PixelArtComposer(QWidget):
 
         mainLayout.addLayout(sliderLayout)
         mainLayout.setSpacing(5)
-        return mainWidget
+        
+        return mainWidget, mainLayout
+    
+    def addLabeledInput(self, layout, label, defaultValue):
+        hbox = QHBoxLayout()
+        lbl = QLabel(label, self)
+        inputField = QLineEdit(self)
+        inputField.setText(defaultValue)
+        hbox.addWidget(lbl)
+        hbox.addWidget(inputField)
+        layout.addLayout(hbox)
+        return inputField
     
     def setupPixelArtControls(self):
-        pixelationControl = self.createParameterControl("Pixelation Scale:")
+        # Then create the pixelation control and add it to the layout.
+        pixelationControl, pixelationControlLayout = self.createParameterControl("Pixelation Scale:")
         self.layout.addWidget(pixelationControl)
+
+        applyEdgesLayout = QHBoxLayout()
+        applyEdgesLabel = QLabel("Apply Edges", self)
+        self.applyEdgesCheckbox = QCheckBox("", self)
+        self.applyEdgesCheckbox.setChecked(False)
+
+        applyEdgesLayout.addWidget(applyEdgesLabel)
+        applyEdgesLayout.addWidget(self.applyEdgesCheckbox)
+
+        self.lowThresholdInput = self.addLabeledInput(applyEdgesLayout, "Low Threshold:", "10")
+        self.highThresholdInput = self.addLabeledInput(applyEdgesLayout, "High Threshold:", "1000")
+        self.blurKernelSizeInput = self.addLabeledInput(applyEdgesLayout, "Blur Kernel Size:", "101")
+        self.edgeColorInput = self.addLabeledInput(applyEdgesLayout, "Edge Color (#RRGGBB):", "#000000")
+        self.lineThicknessInput = self.addLabeledInput(applyEdgesLayout, "Line Thickness:", "1")
+        
+        furthestColorLabel = QLabel("Use Furthest Colors", self)
+        self.furthestColorCheckbox = QCheckBox("", self)
+        self.furthestColorCheckbox.setChecked(False) 
+
+        applyEdgesLayout.addWidget(furthestColorLabel)
+        applyEdgesLayout.addWidget(self.furthestColorCheckbox)
+    
+        self.layout.addLayout(applyEdgesLayout)
 
     def openImageDialog(self):
         options = QFileDialog.Options()
@@ -190,25 +301,53 @@ class PixelArtComposer(QWidget):
 
         _, input_image_extension = os.path.splitext(self.loaded_image_path)
 
-        output_image = os.path.join(tempfile.gettempdir(), f'output_pixel_art{input_image_extension}')
-        palette_file = os.path.join(os.path.dirname(__file__), 'hex', self.hexDropdown.currentText())
+        output_image = os.path.join(self.temp_dir_path, f'output_pixel_art{input_image_extension}')    
+        print("Selected hex file from dropdown:", self.hexDropdown.currentText())
+        palette_file = get_resource_path(os.path.join('hex', self.hexDropdown.currentText()))
+        print("Constructed palette_file path:", palette_file)
+
         if self.pixelation_scale_input is None:
             print("Pixelation scale input is not initialized.")
             return
 
         pixelation_scale = float(self.pixelation_scale_input.text())
         input_image_path = os.path.abspath(str(self.loaded_image_path))
-        all_procss(input_image_path, palette_file, str(pixelation_scale), output_image)
+        
+        image = cv2.imread(input_image_path)
+        if image is None:
+            print(f"Could not read the image: {input_image_path}")
+            return 1
+
+        if image.size == 0:
+            print(f"{input_image_path} image size is 0")
+            return 1
+
+        if self.applyEdgesCheckbox.isChecked():
+            low_threshold = int(self.lowThresholdInput.text() or "10")
+            high_threshold = int(self.highThresholdInput.text() or "100")
+            blur_kernel_size = int(self.blurKernelSizeInput.text() or "3")
+            edge_color = self.edgeColorInput.text() or "#000000"
+            line_thickness = int(self.lineThicknessInput.text() or "1")
+
+            image = add_black_edges(image, low_threshold, high_threshold, blur_kernel_size, edge_color, line_thickness)
+        
+        if self.furthestColorCheckbox.isChecked():
+            all_process(image, palette_file, str(pixelation_scale), output_image, False)
+            print("all_process: False")
+        else:
+            all_process(image, palette_file, str(pixelation_scale), output_image, True)
+            print("all_process: True")
+
 
         self.loadImage(output_image)
 
     def setupExecuteButton(self):
-        self.btnExecute = QPushButton('Create Pixel Art', self)
+        self.btnExecute = QPushButton('Compose Pixel Art', self)
         self.btnExecute.clicked.connect(self.executePixelArtComposer)
         self.layout.addWidget(self.btnExecute)
 
     def setupSaveButton(self):
-        self.btnSave = QPushButton('Save Image', self)
+        self.btnSave = QPushButton('Save image', self)
         self.btnSave.clicked.connect(self.saveImageDialog)
         self.layout.addWidget(self.btnSave)
 
@@ -229,14 +368,15 @@ class PixelArtComposer(QWidget):
     def finalizeLayout(self):
         self.layout.setSpacing(5)
         self.layout.setContentsMargins(10, 10, 10, 10)
-        self.setWindowTitle('Pixel Art Maker GUI')
-        self.setGeometry(300, 300, 600, 400)
+        self.setWindowTitle('Pixel Art Composer')
+        self.setGeometry(600, 600, 1200, 800)
 
 def main():
     app = QApplication(sys.argv)
-    ex = PixelArtComposer()
-    ex.show()
-    sys.exit(app.exec_())
+    with tempfile.TemporaryDirectory() as temp_dir_path:
+        ex = PixelArtComposer(temp_dir_path)
+        ex.show()
+        sys.exit(app.exec_())
 
 if __name__ == '__main__':
     main()
