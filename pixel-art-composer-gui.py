@@ -113,12 +113,12 @@ def process_image(image, palette, find_closest=True):
 #     return filtered_image
 
 @jit(nopython=True)
-def process_image_blocks(image, palette, find_closest=True, block_size=2):
+def process_image_blocks(image, palette, find_closest=True, block_size_width=2, block_size_height=2):
     height, width, _ = image.shape
     processed_image = np.zeros_like(image)
-    for i in range(0, height, block_size):
-        for j in range(0, width, block_size):
-            block = image[i:i+block_size, j:j+block_size]
+    for i in range(0, height, block_size_height):
+        for j in range(0, width, block_size_width):
+            block = image[i:i+block_size_height, j:j+block_size_width]
             
             total_color = np.zeros(3)
             count = 0
@@ -145,7 +145,7 @@ def process_image_blocks(image, palette, find_closest=True, block_size=2):
             if best_color_index == -1:
                 raise ValueError("No best color index found.")
 
-            processed_image[i:i+block_size, j:j+block_size] = palette[best_color_index]
+            processed_image[i:i+block_size_height, j:j+block_size_width] = palette[best_color_index]
     
     return processed_image
 
@@ -157,7 +157,7 @@ def resize_image(image, scale):
     resized = cv2.resize(resized, (image.shape[1], image.shape[0]), interpolation=cv2.INTER_NEAREST)
     return resized
 
-def all_process(image, hex_color_file_path, pixelation_scale, output_file_path, find_closest, block, block_size):
+def all_process(image, hex_color_file_path, pixelation_scale, output_file_path, find_closest, block, block_size_width, block_size_height):
     if image is None or image.size == 0:
         print("Error: Image is empty or not loaded correctly.")
         return 1
@@ -191,9 +191,9 @@ def all_process(image, hex_color_file_path, pixelation_scale, output_file_path, 
             processed_image = process_image(resized_image, palette, False)
     else:
         if find_closest == True:
-            processed_image = process_image_blocks(resized_image, palette, True, block_size)
+            processed_image = process_image_blocks(resized_image, palette, True, block_size_width, block_size_height)
         else:
-            processed_image = process_image_blocks(resized_image, palette, False, block_size)
+            processed_image = process_image_blocks(resized_image, palette, False, block_size_width, block_size_height)
 
     if processed_image is None or processed_image.size == 0:
         print("Error: Processed image is empty.")
@@ -345,7 +345,9 @@ class PixelArtComposer(QWidget):
         secondRow.addWidget(processBlocksLabel)
         secondRow.addWidget(self.processBlocksCheckbox)
 
-        self.blockSizeInput = self.addLabeledInput(secondRow, "Block Size:", "16")
+        self.blockSizeHeightInput = self.addLabeledInput(secondRow, "Block Size Height:", "2")
+        self.blockSizeWidthInput = self.addLabeledInput(secondRow, "Block Size Width:", "2")
+
 
         self.layout.addLayout(secondRow)
 
@@ -405,19 +407,21 @@ class PixelArtComposer(QWidget):
 
             image = add_black_edges(image, low_threshold, high_threshold, blur_kernel_size, edge_color, line_thickness)
         
-        blockSize = int(self.blockSizeInput.text() or "16")
+        blockSizeHeight = int(self.blockSizeHeightInput.text() or "2")
+        blockSizeWidth = int(self.blockSizeWidthInput.text() or "2")
+
 
         if self.processBlocksCheckbox.isChecked():
 
             if self.furthestColorCheckbox.isChecked():
-                all_process(image, palette_file, str(pixelation_scale), output_image, False, True, blockSize)
+                all_process(image, palette_file, str(pixelation_scale), output_image, False, True, blockSizeWidth, blockSizeHeight)
             else:
-                all_process(image, palette_file, str(pixelation_scale), output_image, True, True, blockSize)
+                all_process(image, palette_file, str(pixelation_scale), output_image, True, True, blockSizeWidth, blockSizeHeight)
         else:
             if self.furthestColorCheckbox.isChecked():
-                all_process(image, palette_file, str(pixelation_scale), output_image, False, False, blockSize)
+                all_process(image, palette_file, str(pixelation_scale), output_image, False, False, blockSizeWidth, blockSizeHeight)
             else:
-                all_process(image, palette_file, str(pixelation_scale), output_image, True, False, blockSize)
+                all_process(image, palette_file, str(pixelation_scale), output_image, True, False, blockSizeWidth, blockSizeHeight)
 
 
         self.loadImage(output_image)
