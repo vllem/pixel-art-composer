@@ -9,7 +9,7 @@ from PyQt5.QtWidgets import (QApplication, QWidget, QLabel, QVBoxLayout,
                              QLineEdit, QComboBox, QScrollArea, QCheckBox)
 from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QPixmap, QDoubleValidator
-
+from scipy.signal import convolve2d
 
 os.environ['QT_QPA_PLATFORM_PLUGIN_PATH'] = 'pixel-art-composer/lib/python3.10/site-packages/cv2/qt/plugins/platforms'
 
@@ -73,7 +73,7 @@ def process_image(image, palette, find_closest=True):
     for i in range(height):
         for j in range(width):
             pixel = image[i, j]
-            best_color_index = -1  # Initialized to an invalid index
+            best_color_index = -1
             if find_closest:
                 best_distance = np.inf
             else:
@@ -90,11 +90,65 @@ def process_image(image, palette, find_closest=True):
                     best_color_index = k
 
             if best_color_index == -1:
-                raise ValueError("No best color index found.")  # Using an exception for error handling
+                raise ValueError("No best color index found.")
 
             image[i, j] = palette[best_color_index]
 
     return image
+
+# @jit(nopython=True)
+# def custom_gaussian_kernel(size, sigma=1.0):
+#     size = int(size) // 2
+#     x, y = np.mgrid[-size:size+1, -size:size+1]
+#     g = np.exp(-(x**2 + y**2) / (2 * sigma**2))
+#     return g / g.sum()
+
+# @jit(nopython=True)
+# def custom_gaussian_filter(image, sigma=1.0):
+#     kernel_size = 2 * int(4 * sigma + 0.5) + 1
+#     kernel = custom_gaussian_kernel(kernel_size, sigma)
+#     filtered_image = np.zeros_like(image)
+#     for i in range(3):
+#         filtered_image[:, :, i] = convolve2d(image[:, :, i], kernel, mode='same', boundary='fill', fillvalue=0)
+#     return filtered_image
+
+@jit(nopython=True)
+def process_image_blocks(image, palette, find_closest=True, block_size=2):
+    height, width, _ = image.shape
+    processed_image = np.zeros_like(image)
+    for i in range(0, height, block_size):
+        for j in range(0, width, block_size):
+            block = image[i:i+block_size, j:j+block_size]
+            
+            total_color = np.zeros(3)
+            count = 0
+            for bi in range(block.shape[0]):
+                for bj in range(block.shape[1]):
+                    total_color += block[bi, bj, :]
+                    count += 1
+            mean_color = total_color / count if count > 0 else np.zeros(3)
+            
+            best_color_index = -1
+            if find_closest:
+                best_distance = np.inf
+            else:
+                best_distance = -np.inf
+            for k in range(palette.shape[0]):
+                distance = np.sum((mean_color - palette[k]) ** 2)
+                if find_closest and distance < best_distance:
+                    best_distance = distance
+                    best_color_index = k
+                elif not find_closest and distance > best_distance:
+                    best_distance = distance
+                    best_color_index = k
+
+            if best_color_index == -1:
+                raise ValueError("No best color index found.")
+
+            processed_image[i:i+block_size, j:j+block_size] = palette[best_color_index]
+    
+    return processed_image
+
 
 def resize_image(image, scale):
     if scale < 0.0:
@@ -103,7 +157,7 @@ def resize_image(image, scale):
     resized = cv2.resize(resized, (image.shape[1], image.shape[0]), interpolation=cv2.INTER_NEAREST)
     return resized
 
-def all_process(image, hex_color_file_path, pixelation_scale, output_file_path, find_closest):
+def all_process(image, hex_color_file_path, pixelation_scale, output_file_path, find_closest, block, block_size):
     if image is None or image.size == 0:
         print("Error: Image is empty or not loaded correctly.")
         return 1
@@ -129,11 +183,17 @@ def all_process(image, hex_color_file_path, pixelation_scale, output_file_path, 
     if resized_image is None or resized_image.size == 0:
         print("Error: Resized image is empty.")
         return 1
-
-    if find_closest == True:
-        processed_image = process_image(resized_image, palette, True)
+    
+    if block == False:
+        if find_closest == True:
+            processed_image = process_image(resized_image, palette, True)
+        else:
+            processed_image = process_image(resized_image, palette, False)
     else:
-        processed_image = process_image(resized_image, palette, False)
+        if find_closest == True:
+            processed_image = process_image_blocks(resized_image, palette, True, block_size)
+        else:
+            processed_image = process_image_blocks(resized_image, palette, False, block_size)
 
     if processed_image is None or processed_image.size == 0:
         print("Error: Processed image is empty.")
@@ -249,32 +309,46 @@ class PixelArtComposer(QWidget):
         return inputField
     
     def setupPixelArtControls(self):
-        # Then create the pixelation control and add it to the layout.
         pixelationControl, pixelationControlLayout = self.createParameterControl("Pixelation Scale:")
         self.layout.addWidget(pixelationControl)
 
-        applyEdgesLayout = QHBoxLayout()
+        firstRow = QHBoxLayout()
+        
         applyEdgesLabel = QLabel("Apply Edges", self)
         self.applyEdgesCheckbox = QCheckBox("", self)
         self.applyEdgesCheckbox.setChecked(False)
 
-        applyEdgesLayout.addWidget(applyEdgesLabel)
-        applyEdgesLayout.addWidget(self.applyEdgesCheckbox)
+        firstRow.addWidget(applyEdgesLabel)
+        firstRow.addWidget(self.applyEdgesCheckbox)
 
-        self.lowThresholdInput = self.addLabeledInput(applyEdgesLayout, "Low Threshold:", "10")
-        self.highThresholdInput = self.addLabeledInput(applyEdgesLayout, "High Threshold:", "1000")
-        self.blurKernelSizeInput = self.addLabeledInput(applyEdgesLayout, "Blur Kernel Size:", "101")
-        self.edgeColorInput = self.addLabeledInput(applyEdgesLayout, "Edge Color (#RRGGBB):", "#000000")
-        self.lineThicknessInput = self.addLabeledInput(applyEdgesLayout, "Line Thickness:", "1")
+        self.lowThresholdInput = self.addLabeledInput(firstRow, "Low Threshold:", "10")
+        self.highThresholdInput = self.addLabeledInput(firstRow, "High Threshold:", "1000")
+        self.blurKernelSizeInput = self.addLabeledInput(firstRow, "Blur Kernel Size:", "101")
+        self.edgeColorInput = self.addLabeledInput(firstRow, "Edge Color (#RRGGBB):", "#000000")
+        self.lineThicknessInput = self.addLabeledInput(firstRow, "Line Thickness:", "1")
+    
+        self.layout.addLayout(firstRow)
         
+        secondRow = QHBoxLayout()
+
         furthestColorLabel = QLabel("Use Furthest Colors", self)
         self.furthestColorCheckbox = QCheckBox("", self)
         self.furthestColorCheckbox.setChecked(False) 
 
-        applyEdgesLayout.addWidget(furthestColorLabel)
-        applyEdgesLayout.addWidget(self.furthestColorCheckbox)
-    
-        self.layout.addLayout(applyEdgesLayout)
+        secondRow.addWidget(furthestColorLabel)
+        secondRow.addWidget(self.furthestColorCheckbox)
+
+        processBlocksLabel = QLabel("Use Blocks Processing", self)
+        self.processBlocksCheckbox = QCheckBox("", self)
+        self.processBlocksCheckbox.setChecked(False)
+
+        secondRow.addWidget(processBlocksLabel)
+        secondRow.addWidget(self.processBlocksCheckbox)
+
+        self.blockSizeInput = self.addLabeledInput(secondRow, "Block Size:", "16")
+
+        self.layout.addLayout(secondRow)
+
 
     def openImageDialog(self):
         options = QFileDialog.Options()
@@ -331,12 +405,19 @@ class PixelArtComposer(QWidget):
 
             image = add_black_edges(image, low_threshold, high_threshold, blur_kernel_size, edge_color, line_thickness)
         
-        if self.furthestColorCheckbox.isChecked():
-            all_process(image, palette_file, str(pixelation_scale), output_image, False)
-            print("all_process: False")
+        blockSize = int(self.blockSizeInput.text() or "16")
+
+        if self.processBlocksCheckbox.isChecked():
+
+            if self.furthestColorCheckbox.isChecked():
+                all_process(image, palette_file, str(pixelation_scale), output_image, False, True, blockSize)
+            else:
+                all_process(image, palette_file, str(pixelation_scale), output_image, True, True, blockSize)
         else:
-            all_process(image, palette_file, str(pixelation_scale), output_image, True)
-            print("all_process: True")
+            if self.furthestColorCheckbox.isChecked():
+                all_process(image, palette_file, str(pixelation_scale), output_image, False, False, blockSize)
+            else:
+                all_process(image, palette_file, str(pixelation_scale), output_image, True, False, blockSize)
 
 
         self.loadImage(output_image)
@@ -366,7 +447,7 @@ class PixelArtComposer(QWidget):
             print("No image to save.")
     
     def finalizeLayout(self):
-        self.layout.setSpacing(5)
+        self.layout.setSpacing(20)
         self.layout.setContentsMargins(10, 10, 10, 10)
         self.setWindowTitle('Pixel Art Composer')
         self.setGeometry(600, 600, 1200, 800)
